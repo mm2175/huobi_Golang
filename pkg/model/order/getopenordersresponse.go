@@ -21,6 +21,7 @@ type OpenOrder struct {
 	FilledAmount     decimal.Decimal `json:"filled-amount"`
 	FilledCashAmount decimal.Decimal `json:"filled-cash-amount"`
 	FilledFees       decimal.Decimal `json:"filled-fees"`
+	FinishedAt       int64           `json:"finished-at"`
 	Source           string          `json:"source"`
 	State            string          `json:"state"`
 	StopPrice        decimal.Decimal `json:"stop-price"`
