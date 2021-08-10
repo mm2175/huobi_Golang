@@ -14,6 +14,7 @@ type CurrencyChain struct {
 
 type Chains struct {
 	Chain                   string `json:"chain"`
+	DisplayName             string `json:"displayName"`
 	BaseChain               string `json:"baseChain"`
 	BaseChainProtocol       string `json:"baseChainProtocol"`
 	IsDynamic               bool   `json:"isDynamic"`
@@ -33,4 +34,6 @@ type Chains struct {
 	MaxTransactFeeWithdraw  string `json:"maxTransactFeeWithdraw"`
 	TransactFeeRateWithdraw string `json:"transactFeeRateWithdraw"`
 	WithdrawStatus          string `json:"withdrawStatus"`
+	AddrWithTag             bool   `json:"addrWithTag"`
+	AddrDepositTag          bool   `json:"addrDepositTag"`
 }
