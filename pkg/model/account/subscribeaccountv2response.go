@@ -1,6 +1,10 @@
 package account
 
-import "github.com/huobirdcenter/huobi_golang/pkg/model/base"
+import (
+	"encoding/json"
+
+	"github.com/huobirdcenter/huobi_golang/pkg/model/base"
+)
 
 type SubscribeAccountV2Response struct {
 	base.WebSocketV2ResponseBase
@@ -13,4 +17,13 @@ type SubscribeAccountV2Response struct {
 		AccountType string `json:"accountType"`
 		ChangeTime  int64  `json:"changeTime"`
 	}
+}
+
+func (s *SubscribeAccountV2Response) String() string {
+	bytes, err := json.Marshal(s)
+	if err != nil {
+		return "marshal"
+	}
+
+	return string(bytes)
 }
