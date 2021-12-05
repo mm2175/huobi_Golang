@@ -2,20 +2,35 @@ package websocketclientbase
 
 import (
 	"fmt"
+	"reflect"
+	"sync"
+	"sync/atomic"
+	"time"
+
 	"github.com/gorilla/websocket"
+
 	"github.com/huobirdcenter/huobi_golang/internal/gzip"
 	"github.com/huobirdcenter/huobi_golang/internal/model"
 	"github.com/huobirdcenter/huobi_golang/internal/requestbuilder"
 	"github.com/huobirdcenter/huobi_golang/logging/applogger"
 	"github.com/huobirdcenter/huobi_golang/pkg/model/auth"
 	"github.com/huobirdcenter/huobi_golang/pkg/model/base"
-	"sync"
-	"time"
 )
 
 const (
 	websocketV2Path = "/ws/v2"
 )
+
+var (
+	instanceId uint64 = 0
+)
+
+func GetInstanceName(t interface{}) string {
+	id := atomic.AddUint64(&instanceId, 1)
+	typeOf := reflect.TypeOf(t)
+
+	return fmt.Sprintf("%s#%d", typeOf.String(), id)
+}
 
 // It will be invoked after websocket v2 authentication response received
 type AuthenticationV2ResponseHandler func(resp *auth.WebSocketV2AuthenticationResponse)
@@ -24,6 +39,8 @@ type AuthenticationV2ResponseHandler func(resp *auth.WebSocketV2AuthenticationRe
 type WebSocketV2ClientBase struct {
 	host string
 	conn *websocket.Conn
+
+	name string
 
 	authenticationResponseHandler AuthenticationV2ResponseHandler
 	messageHandler                MessageHandler
@@ -39,12 +56,14 @@ type WebSocketV2ClientBase struct {
 }
 
 // Initializer
-func (p *WebSocketV2ClientBase) Init(accessKey string, secretKey string, host string) *WebSocketV2ClientBase {
+func (p *WebSocketV2ClientBase) Init(name string, accessKey string, secretKey string, host string) *WebSocketV2ClientBase {
+	p.name = name
 	p.host = host
 	p.stopReadChannel = make(chan int, 1)
 	p.stopTickerChannel = make(chan int, 1)
 	p.requestBuilder = new(requestbuilder.WebSocketV2RequestBuilder).Init(accessKey, secretKey, host, websocketV2Path)
 	p.sendMutex = &sync.Mutex{}
+
 	return p
 }
 
@@ -73,7 +92,7 @@ func (p *WebSocketV2ClientBase) Connect(autoConnect bool) {
 // Send data to websocket server
 func (p *WebSocketV2ClientBase) Send(data string) {
 	if p.conn == nil {
-		applogger.Error("WebSocket sent error: no connection available")
+		applogger.Error("name=%s conn=%p WebSocket sent error: no connection available", p.name, p.conn)
 		return
 	}
 
@@ -82,7 +101,7 @@ func (p *WebSocketV2ClientBase) Send(data string) {
 	p.sendMutex.Unlock()
 
 	if err != nil {
-		applogger.Error("WebSocket sent error: data=%s, error=%s", data, err)
+		applogger.Error("name=%s conn=%p WebSocket sent error: data=%s, error=%s", p.name, p.conn, data, err)
 	}
 }
 
@@ -96,13 +115,13 @@ func (p *WebSocketV2ClientBase) Close() {
 func (p *WebSocketV2ClientBase) connectWebSocket() {
 	var err error
 	url := fmt.Sprintf("wss://%s%s", p.host, websocketV2Path)
-	applogger.Debug("WebSocket connecting...")
+	applogger.Debug("name=%s WebSocket connecting...", p.name)
 	p.conn, _, err = websocket.DefaultDialer.Dial(url, nil)
 	if err != nil {
-		applogger.Error("WebSocket connected error: %s", err)
+		applogger.Error("name=%s WebSocket connected error: %s", p.name, err)
 		return
 	}
-	applogger.Info("WebSocket connected")
+	applogger.Info("name=%s conn=%p WebSocket connected", p.name, p.conn)
 
 	// start loop to read and handle message
 	p.startReadLoop()
@@ -110,11 +129,11 @@ func (p *WebSocketV2ClientBase) connectWebSocket() {
 	// send authentication if connect to websocket successfully
 	auth, err := p.requestBuilder.Build()
 	if err != nil {
-		applogger.Error("Signature generated error: %s", err)
+		applogger.Error("name=%s conn=%p Signature generated error: %s", p.name, p.conn, err)
 		return
 	}
 	p.Send(auth)
-	applogger.Info("WebSocket sent authentication")
+	applogger.Info("name=%s conn=%p WebSocket sent authentication", p.name, p.conn)
 }
 
 // disconnect with server
@@ -126,14 +145,14 @@ func (p *WebSocketV2ClientBase) disconnectWebSocket() {
 	// start a new goroutine to send stop signal
 	go p.stopReadLoop()
 
-	applogger.Debug("WebSocket disconnecting...")
+	applogger.Debug("name=%s conn=%p WebSocket disconnecting...", p.name, p.conn)
 	err := p.conn.Close()
 	if err != nil {
-		applogger.Error("WebSocket disconnect error: %s", err)
+		applogger.Error("name=%s conn=%p WebSocket disconnect error: %s", p.name, p.conn, err)
 		return
 	}
 
-	applogger.Info("WebSocket disconnected")
+	applogger.Info("name=%s conn=%p WebSocket disconnected", p.name, p.conn)
 }
 
 // initialize a ticker and start a goroutine tickerLoop()
@@ -153,21 +172,21 @@ func (p *WebSocketV2ClientBase) stopTicker() {
 // It checks the last data that received from server, if it is longer than the threshold,
 // it will force disconnect server and connect again.
 func (p *WebSocketV2ClientBase) tickerLoop() {
-	applogger.Debug("tickerLoop started")
+	applogger.Debug("name=%s conn=%p tickerLoop started", p.name, p.conn)
 	for {
 		select {
 		// start a goroutine readLoop()
 		case <-p.stopTickerChannel:
-			applogger.Debug("tickerLoop stopped")
+			applogger.Debug("name=%s conn=%p tickerLoop stopped", p.name, p.conn)
 			return
 
 		// Receive tick from tickChannel
 		case <-p.ticker.C:
 			elapsedSecond := time.Now().Sub(p.lastReceivedTime).Seconds()
-			applogger.Debug("WebSocket received data %f sec ago", elapsedSecond)
+			applogger.Debug("name=%s conn=%p WebSocket received data %f sec ago", p.name, p.conn, elapsedSecond)
 
 			if elapsedSecond > ReconnectWaitSecond {
-				applogger.Info("WebSocket reconnect...")
+				applogger.Info("name=%s conn=%p WebSocket reconnect...", p.name, p.conn)
 				p.disconnectWebSocket()
 				p.connectWebSocket()
 			}
@@ -188,24 +207,24 @@ func (p *WebSocketV2ClientBase) stopReadLoop() {
 // defines a for loop to read data from server
 // it will stop once it receives the signal from stopReadChannel
 func (p *WebSocketV2ClientBase) readLoop() {
-	applogger.Debug("readLoop started")
+	applogger.Debug("name=%s conn=%p readLoop started", p.name, p.conn)
 	for {
 		select {
 		// Receive data from stopChannel
 		case <-p.stopReadChannel:
-			applogger.Debug("readLoop stopped")
+			applogger.Debug("name=%s conn=%p readLoop stopped", p.name, p.conn)
 			return
 
 		default:
 			if p.conn == nil {
-				applogger.Error("Read error: no connection available")
+				applogger.Error("name=%s conn=%p Read error: no connection available", p.name, p.conn)
 				time.Sleep(TimerIntervalSecond * time.Second)
 				continue
 			}
 
 			msgType, buf, err := p.conn.ReadMessage()
 			if err != nil {
-				applogger.Error("Read error: %s", err)
+				applogger.Error("name=%s conn=%p Read error: %s", p.name, p.conn, err)
 				time.Sleep(TimerIntervalSecond * time.Second)
 				continue
 			}
@@ -217,7 +236,7 @@ func (p *WebSocketV2ClientBase) readLoop() {
 			if msgType == websocket.BinaryMessage {
 				message, err = gzip.GZipDecompress(buf)
 				if err != nil {
-					applogger.Error("UnGZip data error: %s", err)
+					applogger.Error("name=%s conn=%p UnGZip data error: %s", p.name, p.conn, err)
 					return
 				}
 			} else if msgType == websocket.TextMessage {
@@ -228,10 +247,10 @@ func (p *WebSocketV2ClientBase) readLoop() {
 			// If it is Ping then respond Pong
 			pingV2Msg := model.ParsePingV2Message(message)
 			if pingV2Msg.IsPing() {
-				applogger.Debug("Received Ping: %d", pingV2Msg.Data.Timestamp)
+				applogger.Debug("name=%s conn=%p Received Ping: %d", p.name, p.conn, pingV2Msg.Data.Timestamp)
 				pongMsg := fmt.Sprintf("{\"action\": \"pong\", \"data\": { \"ts\": %d } }", pingV2Msg.Data.Timestamp)
 				p.Send(pongMsg)
-				applogger.Debug("Respond  Pong: %d", pingV2Msg.Data.Timestamp)
+				applogger.Debug("name=%s conn=%p Respond  Pong: %d", p.name, p.conn, pingV2Msg.Data.Timestamp)
 			} else {
 				// Try to pass as websocket v2 authentication response
 				// If it is then invoke authentication handler
@@ -248,7 +267,7 @@ func (p *WebSocketV2ClientBase) readLoop() {
 						{
 							result, err := p.messageHandler(message)
 							if err != nil {
-								applogger.Error("Handle message error: %s", err)
+								applogger.Error("name=%s conn=%p Handle message error: %s", p.name, p.conn, err)
 								continue
 							}
 							if p.responseHandler != nil {
